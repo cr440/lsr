@@ -1,3 +1,4 @@
 # lsr
-large scope recon
+Large scope recon.
+
 Recon full assets of Target.com
