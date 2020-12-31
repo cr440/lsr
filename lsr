@@ -1,0 +1,64 @@
+#!/bin/bash
+
+amass intel -d $1 -whois -o whois_tmp
+
+x=$(echo $1|cut -d '.' -f1)
+
+cat whois_tmp | grep -i [.]$x >> $1;
+# cat whois_tmp | grep -i [.]$x >> $1; cat whois_tmp | grep -i [.]tesla[.] >> tesla.com;cat whoistmp | grep -i ^tesla.com >> tesla.com
+
+# Find CIDR from bgp.net or whois.arin.net/ui/
+# massscan — range <CIDR_here> -p 80, 443, 8080, 8443 -oG results.txt — rate 10000 | tee a massdns__CIDR_IPS
+
+# Look for ASN, find CIDR from ASN; Find Root domains CIDR
+python3 asnlookup.py -o "$x"
+for i in `cat ./output/$x_ipv4.txt`; do echo $i ; amass intel -active -cidr $i -rf /home/ubuntu/Wordlists/50resolvers.txt | tee -a cidrtmp; done
+cat cidrtmp | grep -i [.]$x >> $1;
+
+z=`dig @1.1.1.1 A,CNAME {test321123,testingforwildcard,plsdontgimmearesult}.$1 +short | wc -l`
+
+if [ $z -gt 0 ]
+then
+    echo Wildcard configuration enabled
+else
+    echo [*]Bruteforcing
+    sed "s/$/.$1/" /home/ubuntu/wordlists/SecLists/Discovery/DNS/shubs-subdomains.txt >> bruteforced_list
+    cat bruteforced_list | massdns -q -r /home/ubuntu/wordlists/50resolvers.txt -t A -o S | cut -d " " -f 1 | sed 's/.$//' | tee -a bruteforce_resolved
+    # rm bruteforced_list
+    cat bruteforce_resolved | httpx | sed 's/https\?:\/\///' | tee -a $1_bruteforce_subdomains
+    # rm bruteforce_resolved
+fi
+
+echo [*]Dont forget to spider with burp
+
+echo [*]Running amass
+amass enum -passive -d $1 -rf /home/ubuntu/wordlists/50resolvers.txt -timeout 12 -o $1_amass_subdomains
+
+echo [*]Running sublister
+sublister -d $1 -o $1_sublister_subdomains
+
+# copy all subdomains to subfinderinput . For using as input for subfinder  
+for i in `ls | grep .*_subdomains`;do cat $i >> all.tmp;done
+cat all.tmp | sort -u >> subfinderinput
+rm all.tmp
+subfinder -rL /home/ubuntu/wordlists/50resolvers.txt -o subfinder_subdomains -t 100 -dL subfinderinput -timeout 10 -silent
+rm subfinderinput
+
+echo [*]Sorting all to all.txt
+for i in `ls | grep .*_subdomains`;do cat $i >> all.tmp;done
+cat all.tmp | sort -u >> all.txt
+
+echo [*]Running dnsgen
+dnsgen all.txt -f -w ~/wordlists/SecLists/Discovery/DNS/subdomains-top1million-5000.txt | sort -u | tee -a dnsgen_subdomains
+echo [*]Resolving dnsgen output
+cat dnsgen_subdomains | massdns -q -r ~/wordlists/50resolvers.txt -t A -o S | tee -a massdns-output
+# rm dnsgen_subdomains
+
+cat massdns-output | cut -d " " -f 1 | sed 's/.$//' |tee -a subdomains.tmp
+cat all.txt >> subdomains.tmp
+# rm all.txt
+cat subdomains.tmp | sort -u |tee -a subdomains.sorted
+# rm subdomains.tmp
+cat subdomains.sorted | httpx -silent | tee -a live.http
+# rm subdomains.sorted
+cat live.http | sed 's/https\?:\/\///' | tee -a live.txt
